@@ -708,7 +708,6 @@
         if (integrationMethod === 'onetag') {
           console.log('%c🔀 Using OneTag Integration', 'color: #8B5CF6; font-weight: bold');
           await fireOneTagEvent(keywords);
-          sponsoredProducts = []; // OneTag doesn't return products in this implementation
           return;
         }
 
@@ -924,6 +923,31 @@
       });
     }
 
+    // Wait for OneTag response variable to be populated
+    function waitForOneTagResponse(maxWaitMs = 5000) {
+      return new Promise((resolve, reject) => {
+        const startTime = Date.now();
+        const pollInterval = 100; // Check every 100ms
+
+        console.log('%c⏳ Waiting for window.retailMediaAdRequest...', 'color: #8B5CF6; font-weight: bold');
+
+        const checkVariable = setInterval(() => {
+          const elapsed = Date.now() - startTime;
+
+          if (window.retailMediaAdRequest) {
+            clearInterval(checkVariable);
+            console.log('%c✓ window.retailMediaAdRequest detected!', 'color: #059669; font-weight: bold');
+            console.log('%cElapsed time:', 'color: #8B5CF6', elapsed + 'ms');
+            resolve(window.retailMediaAdRequest);
+          } else if (elapsed >= maxWaitMs) {
+            clearInterval(checkVariable);
+            console.log('%c⚠️ Timeout waiting for retailMediaAdRequest', 'color: #F59E0B; font-weight: bold');
+            resolve(null); // Resolve with null rather than reject
+          }
+        }, pollInterval);
+      });
+    }
+
     // Fire OneTag event
     async function fireOneTagEvent(keywords) {
       try {
@@ -933,11 +957,15 @@
         if (!partnerId) {
           console.warn('Partner ID not configured - skipping OneTag event');
           showEndpointStatus('⚠️ Configure Partner ID in Admin Settings to enable tracking', 'warning');
+          sponsoredProducts = [];
           return;
         }
 
         // Ensure script is loaded first
         await injectOneTagScript(partnerId);
+
+        // Clear any previous retailMediaAdRequest
+        window.retailMediaAdRequest = null;
 
         // Initialize criteo_q if not exists
         window.criteo_q = window.criteo_q || [];
@@ -981,9 +1009,31 @@
 
         console.log('%cFull criteo_q queue:', 'color: #8B5CF6');
         console.log(window.criteo_q);
-        console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
 
-        showEndpointStatus('✓ OneTag event fired successfully', 'success');
+        // Show waiting status
+        showEndpointStatus('⏳ Waiting for OneTag response...', 'warning');
+
+        // Wait for OneTag to populate retailMediaAdRequest
+        const responseData = await waitForOneTagResponse(5000);
+
+        if (responseData) {
+          console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+          console.log('%cONETAG RESPONSE RECEIVED', 'color: #8B5CF6; font-weight: bold; font-size: 14px');
+          console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+          console.log('%cResponse data:', 'color: #8B5CF6');
+          console.log(responseData);
+
+          // Parse sponsored products using existing parser
+          sponsoredProducts = parseSponsoredProducts(responseData);
+          console.log('%c🎯 Parsed ' + sponsoredProducts.length + ' sponsored products from OneTag', 'color: #059669; font-weight: bold');
+          console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+
+          showEndpointStatus('✓ OneTag event fired - ' + sponsoredProducts.length + ' sponsored products loaded', 'success');
+        } else {
+          console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+          sponsoredProducts = [];
+          showEndpointStatus('✓ OneTag event fired (no sponsored products returned)', 'success');
+        }
 
       } catch (error) {
         console.log('%c========================================', 'color: #DC2626; font-weight: bold');
@@ -991,6 +1041,7 @@
         console.log('%c========================================', 'color: #DC2626; font-weight: bold');
         console.error('Error details:', error);
         console.log('%c========================================', 'color: #DC2626; font-weight: bold');
+        sponsoredProducts = [];
         showEndpointStatus('⚠️ Error firing OneTag event: ' + error.message, 'error');
       }
     }
