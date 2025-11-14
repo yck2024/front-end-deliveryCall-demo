@@ -1,0 +1,20 @@
+<script type="text/javascript" src="//dynamic.criteo.com/js/ld/ld.js?a=#####" async></script>
+<script type="text/javascript">
+  window.criteo_q = window.criteo_q || [];
+  window.criteo_q.push(
+    { event: "setAccount", account: "12345" }, // Your partner ID
+    { event: "setRetailerVisitorId", id: "0193553C0A39937F23FC" }, // User's guest ID
+    { event: "setCustomerId", id: "1SDFJI435FH12HFK2" }, // User's logged-in ID
+    // { 
+    //   event: "setEmail", 
+    //   email: "d9c378bb0369ee148f7700fc296165d4e8dc356b90ac318be3701ee76f00c588" // User's SHA-256 hashed email
+    // },
+    { event: "setSiteType", type: "d" }, // User's device type
+    { event: "viewSearchResult",
+      item: Array.isArray(items) ? items : [],
+      keywords: kw,
+      page_number: pageN,
+      page_id: pageId
+    }
+  );
+</script>

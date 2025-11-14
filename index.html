@@ -276,6 +276,42 @@
             </p>
           </div>
 
+          <!-- Integration Method -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              Integration Method <span class="text-red-500">*</span>
+            </label>
+            <div class="space-y-2">
+              <label class="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="integrationMethod"
+                  value="direct"
+                  id="methodDirect"
+                  checked
+                  class="mt-1"
+                />
+                <div>
+                  <div class="font-medium text-gray-900">Direct API Call</div>
+                  <div class="text-xs text-gray-500">Call Criteo delivery endpoint directly via HTTP</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="integrationMethod"
+                  value="onetag"
+                  id="methodOneTag"
+                  class="mt-1"
+                />
+                <div>
+                  <div class="font-medium text-gray-900">OneTag Integration</div>
+                  <div class="text-xs text-gray-500">Inject Criteo OneTag script and fire events via criteo_q</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <!-- Page ID -->
           <div>
             <label for="pageIdInput" class="block text-sm font-medium text-gray-700 mb-2">
@@ -659,13 +695,25 @@
         const partnerId = localStorage.getItem('partnerId');
         const dataCenter = localStorage.getItem('dataCenter') || 'as';
         const pageId = localStorage.getItem('pageId') || 'viewSearchResultDesktop';
-        
+        const integrationMethod = localStorage.getItem('integrationMethod') || 'direct';
+
         if (!partnerId) {
           console.warn('Partner ID not configured - skipping delivery endpoint call');
           showEndpointStatus('⚠️ Configure Partner ID in Admin Settings to enable tracking', 'warning');
           sponsoredProducts = [];
           return;
         }
+
+        // Route to appropriate integration method
+        if (integrationMethod === 'onetag') {
+          console.log('%c🔀 Using OneTag Integration', 'color: #8B5CF6; font-weight: bold');
+          await fireOneTagEvent(keywords);
+          sponsoredProducts = []; // OneTag doesn't return products in this implementation
+          return;
+        }
+
+        // Continue with Direct API Call
+        console.log('%c🔀 Using Direct API Call', 'color: #4F46E5; font-weight: bold');
 
         // Construct the delivery endpoint URL
         const endpointUrl = `https://d.${dataCenter}.criteo.com/delivery/retailmedia?` + 
@@ -835,6 +883,116 @@
         console.warn('Could not parse RenderingAttributes:', e);
       }
       return 'Sponsored';
+    }
+
+    // OneTag Integration Functions
+    let oneTagScriptLoaded = false;
+
+    // Inject OneTag script dynamically
+    function injectOneTagScript(partnerId) {
+      if (oneTagScriptLoaded) {
+        console.log('%c✓ OneTag script already loaded', 'color: #8B5CF6; font-weight: bold');
+        return Promise.resolve();
+      }
+
+      return new Promise((resolve, reject) => {
+        console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+        console.log('%cINJECTING CRITEO ONETAG SCRIPT', 'color: #8B5CF6; font-weight: bold; font-size: 14px');
+        console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+        console.log('%cPartner ID:', 'color: #8B5CF6; font-weight: bold', partnerId);
+
+        const script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = `//dynamic.criteo.com/js/ld/ld.js?a=${partnerId}`;
+        script.async = true;
+
+        script.onload = () => {
+          oneTagScriptLoaded = true;
+          console.log('%c✓ OneTag script loaded successfully', 'color: #059669; font-weight: bold');
+          console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+          resolve();
+        };
+
+        script.onerror = (error) => {
+          console.error('%c❌ Failed to load OneTag script', 'color: #DC2626; font-weight: bold', error);
+          console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+          reject(error);
+        };
+
+        document.head.appendChild(script);
+        console.log('%c📤 OneTag script tag injected into <head>', 'color: #0891B2');
+      });
+    }
+
+    // Fire OneTag event
+    async function fireOneTagEvent(keywords) {
+      try {
+        const partnerId = localStorage.getItem('partnerId');
+        const pageId = localStorage.getItem('pageId') || 'viewSearchResultDesktop';
+
+        if (!partnerId) {
+          console.warn('Partner ID not configured - skipping OneTag event');
+          showEndpointStatus('⚠️ Configure Partner ID in Admin Settings to enable tracking', 'warning');
+          return;
+        }
+
+        // Ensure script is loaded first
+        await injectOneTagScript(partnerId);
+
+        // Initialize criteo_q if not exists
+        window.criteo_q = window.criteo_q || [];
+
+        console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+        console.log('%cFIRING CRITEO ONETAG EVENT', 'color: #8B5CF6; font-weight: bold; font-size: 14px');
+        console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+
+        // Build the items array from the organic products
+        const items = currentResults.map(product => product.id);
+
+        // Push events to the queue
+        const events = [
+          { event: "setAccount", account: partnerId },
+          { event: "setRetailerVisitorId", id: VISITOR_ID },
+          { event: "setCustomerId", id: CUSTOMER_ID },
+          { event: "setSiteType", type: "d" }, // d = desktop
+          {
+            event: "viewSearchResult",
+            item: items,
+            keywords: keywords,
+            page_number: 1,
+            page_id: pageId
+          }
+        ];
+
+        console.log('%cPushing events to window.criteo_q:', 'color: #8B5CF6; font-weight: bold');
+        console.table({
+          'Partner ID': partnerId,
+          'Visitor ID': VISITOR_ID,
+          'Customer ID': CUSTOMER_ID,
+          'Keywords': keywords,
+          'Page ID': pageId,
+          'Items Count': items.length
+        });
+
+        events.forEach(event => {
+          window.criteo_q.push(event);
+          console.log('%c✓ Event pushed:', 'color: #059669', event.event);
+        });
+
+        console.log('%cFull criteo_q queue:', 'color: #8B5CF6');
+        console.log(window.criteo_q);
+        console.log('%c========================================', 'color: #8B5CF6; font-weight: bold');
+
+        showEndpointStatus('✓ OneTag event fired successfully', 'success');
+
+      } catch (error) {
+        console.log('%c========================================', 'color: #DC2626; font-weight: bold');
+        console.log('%c❌ ERROR FIRING ONETAG EVENT', 'color: #DC2626; font-weight: bold; font-size: 14px');
+        console.log('%c========================================', 'color: #DC2626; font-weight: bold');
+        console.error('Error details:', error);
+        console.log('%c========================================', 'color: #DC2626; font-weight: bold');
+        showEndpointStatus('⚠️ Error firing OneTag event: ' + error.message, 'error');
+      }
     }
 
     function showEndpointStatus(message, type) {
@@ -1143,11 +1301,14 @@
         const partnerId = localStorage.getItem('partnerId');
         const dataCenter = localStorage.getItem('dataCenter');
         const pageId = localStorage.getItem('pageId');
-        
+        const integrationMethod = localStorage.getItem('integrationMethod') || 'direct';
+
         const partnerIdInput = document.getElementById('partnerIdInput');
         const dataCenterSelect = document.getElementById('dataCenterSelect');
         const pageIdInput = document.getElementById('pageIdInput');
-        
+        const methodDirect = document.getElementById('methodDirect');
+        const methodOneTag = document.getElementById('methodOneTag');
+
         if (partnerId && partnerIdInput) {
           partnerIdInput.value = partnerId;
         }
@@ -1156,6 +1317,11 @@
         }
         if (pageId && pageIdInput) {
           pageIdInput.value = pageId;
+        }
+        if (integrationMethod === 'onetag' && methodOneTag) {
+          methodOneTag.checked = true;
+        } else if (methodDirect) {
+          methodDirect.checked = true;
         }
       } catch (e) {
         console.warn('localStorage not available:', e);
@@ -1167,41 +1333,46 @@
       const dataCenterSelect = document.getElementById('dataCenterSelect');
       const pageIdInput = document.getElementById('pageIdInput');
       const messageDiv = document.getElementById('saveMessage');
-      
+      const methodDirect = document.getElementById('methodDirect');
+      const methodOneTag = document.getElementById('methodOneTag');
+
       if (!partnerIdInput || !dataCenterSelect || !messageDiv) return;
-      
+
       const partnerId = partnerIdInput.value.trim();
       const dataCenter = dataCenterSelect.value;
       const pageId = pageIdInput.value.trim() || 'viewSearchResultDesktop';
-      
+      const integrationMethod = methodOneTag && methodOneTag.checked ? 'onetag' : 'direct';
+
       if (!partnerId) {
         messageDiv.textContent = '⚠️ Partner ID is required';
         messageDiv.className = 'mt-4 p-3 rounded-lg text-sm bg-yellow-100 text-yellow-800';
         messageDiv.style.display = 'block';
         return;
       }
-      
+
       try {
         localStorage.setItem('partnerId', partnerId);
         localStorage.setItem('dataCenter', dataCenter);
         localStorage.setItem('pageId', pageId);
-        
+        localStorage.setItem('integrationMethod', integrationMethod);
+
         messageDiv.textContent = '✓ Settings saved successfully!';
         messageDiv.className = 'mt-4 p-3 rounded-lg text-sm bg-green-100 text-green-800';
         messageDiv.style.display = 'block';
-        
+
         // Update display
         updateConfigDisplay();
-        
+
         // Log the configuration
         console.log('Configuration saved:', {
           partnerId,
           dataCenter,
           pageId,
+          integrationMethod,
           visitorId: VISITOR_ID,
           customerId: CUSTOMER_ID
         });
-        
+
         // Close modal after 1.5 seconds
         setTimeout(() => {
           closeAdminModal();
@@ -1219,25 +1390,28 @@
       const dataCenterSelect = document.getElementById('dataCenterSelect');
       const pageIdInput = document.getElementById('pageIdInput');
       const messageDiv = document.getElementById('saveMessage');
-      
+      const methodDirect = document.getElementById('methodDirect');
+
       if (!messageDiv) return;
-      
+
       try {
         localStorage.removeItem('partnerId');
         localStorage.removeItem('dataCenter');
         localStorage.removeItem('pageId');
-        
+        localStorage.removeItem('integrationMethod');
+
         if (partnerIdInput) partnerIdInput.value = '';
         if (dataCenterSelect) dataCenterSelect.value = 'as';
         if (pageIdInput) pageIdInput.value = '';
-        
+        if (methodDirect) methodDirect.checked = true;
+
         messageDiv.textContent = 'Settings cleared';
         messageDiv.className = 'mt-4 p-3 rounded-lg text-sm bg-gray-100 text-gray-800';
         messageDiv.style.display = 'block';
-        
+
         // Update display
         updateConfigDisplay();
-        
+
         // Close modal after 1.5 seconds
         setTimeout(() => {
           closeAdminModal();
@@ -1255,12 +1429,14 @@
       try {
         const partnerId = localStorage.getItem('partnerId');
         const dataCenter = localStorage.getItem('dataCenter');
+        const integrationMethod = localStorage.getItem('integrationMethod') || 'direct';
         const displayDiv = document.getElementById('configDisplay');
         const configSpan = document.getElementById('currentConfig');
-        
+
         if (displayDiv && configSpan) {
           if (partnerId) {
-            configSpan.textContent = `Partner: ${partnerId} | DC: ${dataCenter || 'as'}`;
+            const methodLabel = integrationMethod === 'onetag' ? 'OneTag' : 'Direct';
+            configSpan.textContent = `Partner: ${partnerId} | DC: ${dataCenter || 'as'} | Method: ${methodLabel}`;
             displayDiv.style.display = 'block';
           } else {
             displayDiv.style.display = 'none';
